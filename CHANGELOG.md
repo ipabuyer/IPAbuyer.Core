@@ -26,3 +26,4 @@
 6. 质量门禁：128 个测试（119 单元 + 9 FFI 端到端）、`cargo fmt --check` 与 `cargo clippy -- -D warnings` 全绿
 7. 工程配置：AGENTS.md（基准约束）、DEVELOPMENT.md（开发指南）、.gitattributes（LFS 与换行）、.gitignore、tag.ps1 与 build.yml（打 `v*` 标签触发测试→构建→发布）；版本号约定为 `0.0.x`，每发版一次 x+1
 8. 修复：同步服务 `list-purchases` 调用未携带加密密钥；下载队列详细日志重复上抛；CI arm64 交叉编译补充 LLVM/clang
+9. 修复：`sync_create` 借用宿主字符串跨线程使用（use-after-free），现于派生工作线程前复制为 owned 字符串，并补端到端回归测试

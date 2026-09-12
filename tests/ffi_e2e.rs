@@ -390,6 +390,60 @@ fn purchase_via_fake_ipatool_returns_outcome_and_logs() {
     let _ = std::fs::remove_dir_all(script.parent().unwrap());
 }
 
+#[cfg(windows)]
+#[test]
+fn sync_create_copies_strings_before_worker_reads_them() {
+    // 回归：宿主字符串仅在调用期间有效，create 返回后立即释放（模拟 C# 门面 finally 的释放时序），
+    // 工作线程必须使用 create 内复制的 owned 字符串。
+    let script = write_fake_ipatool(
+        "sync_copy",
+        &[
+            r#"{"level":"info","count":1,"totalCount":1,"page":1,"apps":[{"bundleID":"com.e2e.copy","name":"E2E","price":0}]}"#,
+        ],
+    );
+    let db_path = unique_temp("sync_copy_db");
+    let passphrase = cstring("passphrase");
+    let account = cstring("user@test.com");
+    let mut handle = std::ptr::null_mut();
+
+    let code = {
+        let db_path_c = cstring(&db_path.to_string_lossy());
+        let script_c = cstring(&script.to_string_lossy());
+        unsafe {
+            ffi::sync::ipabuyer_core_sync_create(
+                db_path_c.as_ptr(),
+                script_c.as_ptr(),
+                passphrase.as_ptr(),
+                account.as_ptr(),
+                0,
+                &mut handle,
+            )
+        }
+    };
+    assert_eq!(code, FFI_OK);
+
+    let completed = poll_until(Duration::from_secs(30), || {
+        let mut out = std::ptr::null_mut();
+        unsafe { ffi::sync::ipabuyer_core_sync_status(handle, &mut out) };
+        let status = read_json(out);
+        status["outcome"].is_object()
+    });
+    assert!(completed, "sync must finish within the deadline");
+
+    let mut out = std::ptr::null_mut();
+    unsafe { ffi::sync::ipabuyer_core_sync_status(handle, &mut out) };
+    let status = read_json(out);
+    assert_eq!(
+        status["outcome"]["kind"], "completed",
+        "worker must operate on copied strings, outcome: {:?}",
+        status["outcome"]
+    );
+
+    unsafe { ffi::sync::ipabuyer_core_sync_destroy(handle) };
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_dir_all(script.parent().unwrap());
+}
+
 #[test]
 fn normalized_text_is_exhaustively_shaped() {
     // 确认 FFI 日志契约的两种形态可被稳定区分。

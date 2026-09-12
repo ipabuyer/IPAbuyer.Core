@@ -55,16 +55,18 @@ pub unsafe extern "C" fn ipabuyer_core_sync_create(
     out_handle: *mut *mut SyncHandle,
 ) -> i32 {
     catch(FFI_ERR_PANIC, || -> i32 {
-        let Ok(db_path) = (unsafe { read_cstr(db_path) }) else {
+        // 必须在派生工作线程前复制为 owned 字符串：read_cstr 返回的借用指向宿主内存，
+        // 宿主在 create 返回后即释放（对齐 FFI 契约"字符串仅在调用期间有效"）。
+        let Ok(db_path) = (unsafe { read_cstr(db_path) }).map(str::to_string) else {
             return invalid_arg("db_path");
         };
-        let Ok(exe_path) = (unsafe { read_cstr(exe_path) }) else {
+        let Ok(exe_path) = (unsafe { read_cstr(exe_path) }).map(str::to_string) else {
             return invalid_arg("exe_path");
         };
-        let Ok(passphrase) = (unsafe { read_cstr(passphrase) }) else {
+        let Ok(passphrase) = (unsafe { read_cstr(passphrase) }).map(str::to_string) else {
             return invalid_arg("passphrase");
         };
-        let Ok(account) = (unsafe { read_cstr(account) }) else {
+        let Ok(account) = (unsafe { read_cstr(account) }).map(str::to_string) else {
             return invalid_arg("account");
         };
         if out_handle.is_null() {
@@ -81,7 +83,7 @@ pub unsafe extern "C" fn ipabuyer_core_sync_create(
         let worker_state = Arc::clone(&state);
         let worker = thread::spawn(move || {
             let service = PurchaseSyncService::new();
-            let client = IpatoolClient::new(PathBuf::from(exe_path));
+            let client = IpatoolClient::new(PathBuf::from(&exe_path));
 
             let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut db = match PurchasedAppsDb::open(PathBuf::from(&db_path)) {
@@ -92,8 +94,8 @@ pub unsafe extern "C" fn ipabuyer_core_sync_create(
                     }
                 };
                 let outcome = service.sync(
-                    account,
-                    Some(passphrase),
+                    &account,
+                    Some(&passphrase),
                     &client,
                     &mut db,
                     &worker_cancel,
