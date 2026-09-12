@@ -10,6 +10,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
 use crate::ipatool::client::{ClientError, IpatoolClient};
+use crate::ipatool::response_parser::NormalizedText;
 use crate::ipatool::result::IpatoolResult;
 use crate::purchases::owned_apps_page_parser;
 
@@ -20,22 +21,35 @@ pub const PAGE_SIZE: i64 = 100;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {
     Info,
-    Success,
     Tip,
+    Success,
     Error,
+    /// ipatool 原文输出行。
+    Ipatool,
 }
 
-/// 待宿主本地化的日志条目：稳定键名 + 格式化参数。
+/// 待宿主本地化的日志条目：消息为键名（带参数）或原文（如 ipatool 输出行）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogMessage {
     pub level: LogLevel,
-    pub key: &'static str,
-    pub args: Vec<String>,
+    pub message: NormalizedText,
 }
 
 impl LogMessage {
-    fn new(level: LogLevel, key: &'static str, args: Vec<String>) -> Self {
-        Self { level, key, args }
+    /// 键名日志（宿主用 resw 渲染）。
+    pub fn key(level: LogLevel, key: &'static str, args: Vec<String>) -> Self {
+        Self {
+            level,
+            message: NormalizedText::Keyed { key, args },
+        }
+    }
+
+    /// 原文日志（宿主原样展示）。
+    pub fn raw(level: LogLevel, message: String) -> Self {
+        Self {
+            level,
+            message: NormalizedText::Raw(message),
+        }
     }
 }
 
@@ -113,7 +127,7 @@ impl PurchaseSyncService {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            on_log(LogMessage::new(
+            on_log(LogMessage::key(
                 LogLevel::Tip,
                 "PurchaseSync/Log/AlreadyRunning",
                 Vec::new(),
@@ -135,7 +149,7 @@ impl PurchaseSyncService {
         on_progress: &mut dyn FnMut(i64, i64),
         on_log: &mut dyn FnMut(LogMessage),
     ) -> SyncOutcome {
-        on_log(LogMessage::new(
+        on_log(LogMessage::key(
             LogLevel::Info,
             "PurchaseSync/Log/Start",
             vec![account.to_string()],
@@ -148,7 +162,7 @@ impl PurchaseSyncService {
         loop {
             if cancel.load(Ordering::Relaxed) {
                 store.record_sync_attempt(account, false);
-                on_log(LogMessage::new(
+                on_log(LogMessage::key(
                     LogLevel::Tip,
                     "PurchaseSync/Log/Canceled",
                     Vec::new(),
@@ -160,7 +174,7 @@ impl PurchaseSyncService {
                 Ok(result) => result,
                 Err(ClientError::Canceled) => {
                     store.record_sync_attempt(account, false);
-                    on_log(LogMessage::new(
+                    on_log(LogMessage::key(
                         LogLevel::Tip,
                         "PurchaseSync/Log/Canceled",
                         Vec::new(),
@@ -173,7 +187,7 @@ impl PurchaseSyncService {
             if result.timed_out {
                 let message = FALLBACK_COMMAND_LABEL.to_string();
                 store.record_sync_attempt(account, false);
-                on_log(LogMessage::new(
+                on_log(LogMessage::key(
                     LogLevel::Error,
                     "PurchaseSync/Log/Failed",
                     vec![message.clone()],
@@ -188,7 +202,7 @@ impl PurchaseSyncService {
                     .filter(|message| !message.trim().is_empty())
                     .unwrap_or_else(|| FALLBACK_COMMAND_LABEL.to_string());
                 store.record_sync_attempt(account, false);
-                on_log(LogMessage::new(
+                on_log(LogMessage::key(
                     LogLevel::Error,
                     "PurchaseSync/Log/Failed",
                     vec![message.clone()],
@@ -204,7 +218,7 @@ impl PurchaseSyncService {
                 store.bulk_mark_purchased(&parsed.bundle_ids, account);
                 synced += parsed.bundle_ids.len() as i64;
                 on_progress(synced, total.max(synced));
-                on_log(LogMessage::new(
+                on_log(LogMessage::key(
                     LogLevel::Info,
                     "PurchaseSync/Log/Progress",
                     vec![synced.to_string(), total.max(synced).to_string()],
@@ -219,7 +233,7 @@ impl PurchaseSyncService {
         }
 
         store.record_sync_attempt(account, true);
-        on_log(LogMessage::new(
+        on_log(LogMessage::key(
             LogLevel::Success,
             "PurchaseSync/Log/Completed",
             vec![synced.to_string(), total.max(0).to_string()],
@@ -334,14 +348,17 @@ mod tests {
         assert_eq!(store.bulk_calls.len(), 2);
         assert_eq!(store.attempts, vec![("user@example.com".to_string(), true)]);
         assert_eq!(progress_events, vec![(2, 3), (3, 3)]);
-        assert!(logs.iter().any(|log| log.key == "PurchaseSync/Log/Start"));
         assert!(
             logs.iter()
-                .any(|log| log.key == "PurchaseSync/Log/Progress")
+                .any(|log| log.message.key() == "PurchaseSync/Log/Start")
         );
         assert!(
             logs.iter()
-                .any(|log| log.key == "PurchaseSync/Log/Completed")
+                .any(|log| log.message.key() == "PurchaseSync/Log/Progress")
+        );
+        assert!(
+            logs.iter()
+                .any(|log| log.message.key() == "PurchaseSync/Log/Completed")
         );
     }
 
@@ -492,7 +509,7 @@ mod tests {
         );
         assert!(
             logs.iter()
-                .any(|log| log.key == "PurchaseSync/Log/AlreadyRunning")
+                .any(|log| log.message.key() == "PurchaseSync/Log/AlreadyRunning")
         );
 
         release.store(true, Ordering::Relaxed);

@@ -72,6 +72,12 @@ impl IpatoolResult {
     pub fn is_success_response(&self) -> bool {
         !self.timed_out && self.exit_code == 0
     }
+
+    /// 覆盖超时标志（测试与宿主构造场景用）。
+    pub fn with_timed_out(mut self, timed_out: bool) -> Self {
+        self.timed_out = timed_out;
+        self
+    }
 }
 
 #[cfg(test)]
