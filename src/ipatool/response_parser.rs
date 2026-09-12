@@ -10,7 +10,7 @@ use crate::json;
 use regex::Regex;
 
 /// 归一化后的流文本：`Raw` 为原文，`Keyed` 为待宿主本地化的键与参数。
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NormalizedText {
     Raw(String),
     Keyed {
