@@ -60,9 +60,15 @@ cargo build --release --target aarch64-pc-windows-msvc     # ARM64 DLL
 1. `Cargo.lock` 提交入库：本仓库产出被主应用直接消费的 DLL，需保证可复现构建。
 2. 调试 FFI：可用 `cargo build` 产物配合主应用的 packaged 调试；Core 自身验证以 `cargo test` 与小型集成测试（`tests/`）为主，不依赖主应用。
 
+### 版本管理
+
+1. 版本号约定为 `0.0.x`：每发版一次 `x` 加 1（如首个发布版本为 `0.0.1`，下一次为 `0.0.2`）。
+2. 发版流程：`Cargo.toml` 的 `version` 改为下一个 `0.0.x` → 补充 [CHANGELOG.md](./CHANGELOG.md) → 提交 → 打 `v0.0.x` 标签推送，触发 release workflow 构建 DLL。
+3. `ipabuyer_core_version()` 导出函数返回的就是 `Cargo.toml` 的版本号（编译期注入），宿主可用于校验 DLL 版本。
+
 ### 产物与发布策略
 
-1. **测试版**：本地执行 `cargo build --release`，将 `target/<target-triple>/release/ipabuyer_core.dll` 直接复制到主仓库的 `Include\` 目录供开发调试；文件命名带架构与版本（如 `ipabuyer-core-0.1.0-windows-amd64.dll`、`...-arm64.dll`），避免 x64/ARM64 互相覆盖。
+1. **测试版**：本地执行 `cargo build --release`，将 `target/<target-triple>/release/ipabuyer_core.dll` 直接复制到主仓库的 `Include\` 目录供开发调试；文件命名带架构与版本（如 `ipabuyer-core-0.0.1-windows-amd64.dll`、`...-arm64.dll`），避免 x64/ARM64 互相覆盖。
 2. **正式版**：随主应用发版使用的 DLL **必须由 GitHub Actions 构建产出**，本地构建产物不得进入正式发版：
    1. 本仓库提供 workflow（`.github/workflows/release.yml`）：push `v*` 标签时以 matrix 构建 x64 与 ARM64 两个 DLL，计算 SHA-256 校验和，统一附加到本仓库的 GitHub Release；
    2. 主仓库正式发版时从本仓库对应 Release 下载 DLL 进入 `Include/`，不使用手工构建副本；
