@@ -70,7 +70,7 @@ cargo build --release --target aarch64-pc-windows-msvc     # ARM64 DLL
 
 1. **测试版**：本地执行 `cargo build --release`，将 `target/<target-triple>/release/ipabuyer_core.dll` 直接复制到主仓库的 `Include\` 目录供开发调试；文件命名带架构与版本（如 `ipabuyer-core-0.0.1-windows-amd64.dll`、`...-arm64.dll`），避免 x64/ARM64 互相覆盖。
 2. **正式版**：随主应用发版使用的 DLL **必须由 GitHub Actions 构建产出**，本地构建产物不得进入正式发版：
-   1. 本仓库提供 workflow（`.github/workflows/release.yml`）：push `v*` 标签时以 matrix 构建 x64 与 ARM64 两个 DLL，计算 SHA-256 校验和，统一附加到本仓库的 GitHub Release；
+   1. 本仓库提供 workflow（`.github/workflows/build.yml`）：push/PR 时执行格式化、静态检查与测试；push `v*` 标签时以 matrix 构建 x64 与 ARM64 两个 DLL，计算 SHA-256 校验和，统一附加到本仓库的 GitHub Release；
    2. 主仓库正式发版时从本仓库对应 Release 下载 DLL 进入 `Include/`，不使用手工构建副本；
    3. workflow 固定工具链版本并以 `cargo build --release --locked` 构建，保证可复现。
 3. 主仓库集成 DLL 后，需在其 `.gitattributes` 为 `*.dll` 增加 Git LFS 规则（与内置 ipatool exe 同策略）。
