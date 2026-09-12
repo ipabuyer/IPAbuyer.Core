@@ -1,6 +1,6 @@
 # IPAbuyer.Core AI 编程指导（简要版）
 
-IPAbuyer.Core：IPAbuyer 的跨平台核心库，使用 Rust 重写原 C# 版 `IPAbuyer.Core` 的业务逻辑（ipatool 集成、购买状态、已购买同步、下载队列、数据库、日志缓冲），编译为 cdylib DLL，由 WinUI 3 主应用（仓库 [ipabuyer/ipabuyer](https://github.com/ipabuyer/ipabuyer)，本机路径 `E:\ipabuyer`）通过 FFI 调用。
+IPAbuyer.Core：IPAbuyer 的跨平台核心库，使用 Rust 重写原 C# 版 `IPAbuyer.Core` 的业务逻辑（ipatool 集成、购买状态、已购买同步、下载队列、数据库、日志缓冲），编译为 cdylib DLL，由 WinUI 3 主应用（仓库 [ipabuyer/ipabuyer](https://github.com/ipabuyer/ipabuyer)，以下简称"主仓库"，本仓库与主仓库互为独立仓库、克隆位置不限）通过 FFI 调用。
 
 **本文件是基准文件，不允许修改；详细开发指南见 [DEVELOPMENT.md](./DEVELOPMENT.md)，该文件为详细开发内容，鼓励修改以同步最新开发进度。**
 

@@ -19,7 +19,7 @@
 
 ## 1. 项目概述
 
-IPAbuyer.Core 使用 Rust 重写主应用（`E:\ipabuyer`）中原 C# `IPAbuyer.Core` 与 `IPAbuyer.Core.Execution` 的业务逻辑，目标：
+IPAbuyer.Core 使用 Rust 重写主仓库中原 C# `IPAbuyer.Core` 与 `IPAbuyer.Core.Execution` 的业务逻辑，目标：
 
 1. 跨平台：核心逻辑不绑定 Windows，未来可支持 Linux/macOS 宿主。
 2. 高性能：进程编排与 JSON 解析零拷贝倾向，避免不必要的分配与序列化层级。
@@ -59,6 +59,15 @@ cargo build --release --target aarch64-pc-windows-msvc     # ARM64 DLL
 
 1. `Cargo.lock` 提交入库：本仓库产出被主应用直接消费的 DLL，需保证可复现构建。
 2. 调试 FFI：可用 `cargo build` 产物配合主应用的 packaged 调试；Core 自身验证以 `cargo test` 与小型集成测试（`tests/`）为主，不依赖主应用。
+
+### 产物与发布策略
+
+1. **测试版**：本地执行 `cargo build --release`，将 `target/<target-triple>/release/ipabuyer_core.dll` 直接复制到主仓库的 `Include\` 目录供开发调试；文件命名带架构与版本（如 `ipabuyer-core-0.1.0-windows-amd64.dll`、`...-arm64.dll`），避免 x64/ARM64 互相覆盖。
+2. **正式版**：随主应用发版使用的 DLL **必须由 GitHub Actions 构建产出**，本地构建产物不得进入正式发版：
+   1. 本仓库提供 workflow（`.github/workflows/release.yml`）：push `v*` 标签时以 matrix 构建 x64 与 ARM64 两个 DLL，计算 SHA-256 校验和，统一附加到本仓库的 GitHub Release；
+   2. 主仓库正式发版时从本仓库对应 Release 下载 DLL 进入 `Include/`，不使用手工构建副本；
+   3. workflow 固定工具链版本并以 `cargo build --release --locked` 构建，保证可复现。
+3. 主仓库集成 DLL 后，需在其 `.gitattributes` 为 `*.dll` 增加 Git LFS 规则（与内置 ipatool exe 同策略）。
 
 ## 5. FFI 边界设计
 
@@ -134,7 +143,7 @@ cargo build --release --target aarch64-pc-windows-msvc     # ARM64 DLL
 
 ## 10. 测试策略
 
-1. 纯逻辑（解析器、策略、命令构建、迁移）必须有 `cargo test` 单元测试；测试用例优先采用主应用 C# 测试项目的既有用例（`E:\ipabuyer\IPAbuyer.Tests`），保证行为一致。
+1. 纯逻辑（解析器、策略、命令构建、迁移）必须有 `cargo test` 单元测试；测试用例优先采用主应用 C# 测试项目的既有用例（主仓库 `IPAbuyer.Tests` 项目），保证行为一致。
 2. `list-purchases` 解析测试使用真实输出样本：成功页（`level":"info"` + `apps[]` + `totalCount`）、空页（`count:0`）、错误页（`level":"error"` + `success:false`）。
 3. 进程编排（阶段 2 起）通过注入假可执行文件（shell 脚本/批处理）做集成测试，不依赖真实 Apple 账户。
 4. 测试账户 `test`/`test` 规则与主仓库一致：购买/下载直接成功、不同步。
@@ -151,7 +160,7 @@ cargo build --release --target aarch64-pc-windows-msvc     # ARM64 DLL
 
 ## 12. 参考链接
 
-- 主仓库：<https://github.com/ipabuyer/ipabuyer>（本机 `E:\ipabuyer`）
+- 主仓库：<https://github.com/ipabuyer/ipabuyer>
 - ipatool 仓库：<https://github.com/majd/ipatool>
 - iTunes Search API：`https://itunes.apple.com/search?term=...&entity=software&limit=...&country=...`
 - rusqlite：<https://github.com/rusqlite/rusqlite>
