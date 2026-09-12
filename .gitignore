@@ -1,0 +1,27 @@
+# Rust 构建产物
+/target/
+
+# 本地调试时复制出来的构建产物
+*.dll
+*.exe
+*.lib
+*.exp
+*.pdb
+
+# 测试与性能分析产物
+*.profraw
+
+# 备份文件
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Windows 系统文件
+Thumbs.db
+Desktop.ini
+
+# macOS 系统文件
+.DS_Store

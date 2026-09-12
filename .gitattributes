@@ -1,0 +1,38 @@
+# 默认：自动识别文本/二进制，提交时统一规范化为 LF
+* text=auto
+
+# 源码与配置（显式声明，避免依赖本机 core.autocrlf 设置）
+*.rs text diff=rust
+*.toml text
+*.md text
+*.json text
+*.yml text
+*.h text
+*.c text
+*.editorconfig text
+*.gitignore text
+*.gitattributes text
+LICENSE text
+
+# Cargo.lock 换行固定为 LF，避免跨平台无意义 diff
+Cargo.lock text eol=lf
+
+# Windows 脚本统一 CRLF
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Shell 脚本统一 LF
+*.sh text eol=lf
+
+# 二进制文件
+*.dll binary
+*.exe binary
+*.lib binary
+*.pdb binary
+*.rlib binary
+*.a binary
+*.so binary
+*.dylib binary
+*.png binary
+*.ico binary
