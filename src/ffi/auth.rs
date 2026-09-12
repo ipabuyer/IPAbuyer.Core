@@ -1,13 +1,16 @@
 //! 认证导出：登录、双重验证、登出与登录状态查询。
 //!
 //! JSON 契约：
-//! - 登录/验证码结果 → `{"status":"Success","message":{"kind":"key","key":"LoginService/Status/Success","args":[]},"raw_payload":null}`
-//! - `auth_info` → `{"payload":"...","is_success":true,"has_explicit_failure":false,"email":"user@example.com"}`
-//! - 登出 → `{"success":true}`
+//! - 登录/验证码结果 → `{"status":"Success","message":{"kind":"key","key":"LoginService/Status/Success","args":[]},"raw_payload":null,"logs":[]}`
+//! - `auth_info` → `{"payload":"...","is_success":true,"has_explicit_failure":false,"email":"user@example.com","is_account_missing":false,"logs":[]}`
+//! - 登出 → `{"success":true,"logs":[]}`
 //! - `is_mock_account` → `true` | `false`
 //!
 //! `status` 取值：`Success` / `RequiresTwoFactor` / `InvalidCredential` /
 //! `AuthCodeInvalid` / `NetworkError` / `Timeout` / `UnknownError`。
+//!
+//! `detailed_log` 非 0 时，`logs` 携带命令行与输出行（已脱敏）；
+//! 为 0 时 `logs` 为空数组。
 
 use std::ffi::c_char;
 use std::path::PathBuf;
@@ -17,6 +20,7 @@ use serde_json::json;
 
 use crate::auth::login::{self, LoginResult, LoginStatus, Message};
 use crate::ipatool::client::IpatoolClient;
+use crate::purchases::sync_service::LogMessage;
 
 use super::*;
 
@@ -58,6 +62,7 @@ pub unsafe extern "C" fn ipabuyer_core_auth_login(
     password: *const c_char,
     auth_code: *const c_char,
     passphrase: *const c_char,
+    detailed_log: i32,
     cancel: *const AtomicBool,
     out_json: *mut *mut c_char,
 ) -> i32 {
@@ -81,8 +86,28 @@ pub unsafe extern "C" fn ipabuyer_core_auth_login(
         }
 
         let client = IpatoolClient::new(PathBuf::from(&exe_path));
-        let result = login::login(&client, &account, &password, Some(&passphrase), cancel);
-        write_login_result(out_json, result)
+        let mut logs: Vec<LogMessage> = Vec::new();
+        let result = if detailed_log != 0 {
+            let mut sink = |log: LogMessage| logs.push(log);
+            login::login(
+                &client,
+                &account,
+                &password,
+                Some(&passphrase),
+                cancel,
+                Some(&mut sink),
+            )
+        } else {
+            login::login(
+                &client,
+                &account,
+                &password,
+                Some(&passphrase),
+                cancel,
+                None,
+            )
+        };
+        write_login_result(out_json, result, logs)
     })
 }
 
@@ -97,6 +122,7 @@ pub unsafe extern "C" fn ipabuyer_core_auth_verify_code(
     password: *const c_char,
     auth_code: *const c_char,
     passphrase: *const c_char,
+    detailed_log: i32,
     cancel: *const AtomicBool,
     out_json: *mut *mut c_char,
 ) -> i32 {
@@ -120,25 +146,41 @@ pub unsafe extern "C" fn ipabuyer_core_auth_verify_code(
         }
 
         let client = IpatoolClient::new(PathBuf::from(&exe_path));
-        let result = login::verify_auth_code(
-            &client,
-            &account,
-            &password,
-            Some(&passphrase),
-            &auth_code,
-            cancel,
-        );
-        write_login_result(out_json, result)
+        let mut logs: Vec<LogMessage> = Vec::new();
+        let result = if detailed_log != 0 {
+            let mut sink = |log: LogMessage| logs.push(log);
+            login::verify_auth_code(
+                &client,
+                &account,
+                &password,
+                Some(&passphrase),
+                &auth_code,
+                cancel,
+                Some(&mut sink),
+            )
+        } else {
+            login::verify_auth_code(
+                &client,
+                &account,
+                &password,
+                Some(&passphrase),
+                &auth_code,
+                cancel,
+                None,
+            )
+        };
+        write_login_result(out_json, result, logs)
     })
 }
 
-/// 退出登录（JSON：`{"success":bool}`）。
+/// 退出登录（JSON：`{"success":bool,"logs":[]}`）。
 ///
 /// # Safety
 /// 字符串参数须为 NUL 结尾 UTF-8；`out_json` 须可写。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ipabuyer_core_auth_logout(
     exe_path: *const c_char,
+    detailed_log: i32,
     cancel: *const AtomicBool,
     out_json: *mut *mut c_char,
 ) -> i32 {
@@ -155,16 +197,27 @@ pub unsafe extern "C" fn ipabuyer_core_auth_logout(
 
         let cancel_flag = unsafe { &*cancel };
         let client = IpatoolClient::new(PathBuf::from(exe_path));
-        let success = match client.auth_logout(cancel_flag) {
+        let mut logs: Vec<LogMessage> = Vec::new();
+        let outcome = if detailed_log != 0 {
+            let mut sink = |log: LogMessage| logs.push(log);
+            client.auth_logout(cancel_flag, Some(&mut sink))
+        } else {
+            client.auth_logout(cancel_flag, None)
+        };
+        let success = match outcome {
             Ok(result) => result.is_success_response(),
             Err(_) => false,
         };
-        unsafe { *out_json = alloc_json(&json!({ "success": success })) };
+        let value = json!({
+            "success": success,
+            "logs": logs.iter().map(super::sync::log_message_json).collect::<Vec<_>>(),
+        });
+        unsafe { *out_json = alloc_json(&value) };
         FFI_OK
     })
 }
 
-/// 查询登录状态（JSON：`payload` 原文 + 解析出的 `is_success`/`has_explicit_failure`/`email`）。
+/// 查询登录状态（JSON：`payload` 原文 + 解析出的 `is_success`/`has_explicit_failure`/`email`/`is_account_missing`）。
 ///
 /// # Safety
 /// `passphrase` 可为 NULL；`out_json` 须可写。
@@ -172,6 +225,7 @@ pub unsafe extern "C" fn ipabuyer_core_auth_logout(
 pub unsafe extern "C" fn ipabuyer_core_auth_info(
     exe_path: *const c_char,
     passphrase: *const c_char,
+    detailed_log: i32,
     cancel: *const AtomicBool,
     out_json: *mut *mut c_char,
 ) -> i32 {
@@ -191,7 +245,14 @@ pub unsafe extern "C" fn ipabuyer_core_auth_info(
 
         let cancel_flag = unsafe { &*cancel };
         let client = IpatoolClient::new(PathBuf::from(exe_path));
-        let result = match client.auth_info(passphrase, cancel_flag) {
+        let mut logs: Vec<LogMessage> = Vec::new();
+        let outcome = if detailed_log != 0 {
+            let mut sink = |log: LogMessage| logs.push(log);
+            client.auth_info(passphrase, cancel_flag, Some(&mut sink))
+        } else {
+            client.auth_info(passphrase, cancel_flag, None)
+        };
+        let result = match outcome {
             Ok(result) => result,
             Err(_) => {
                 set_last_error("canceled");
@@ -204,6 +265,8 @@ pub unsafe extern "C" fn ipabuyer_core_auth_info(
             "is_success": crate::ipatool::response_parser::is_success(Some(&payload)),
             "has_explicit_failure": crate::ipatool::response_parser::has_explicit_failure(Some(&payload)),
             "email": crate::ipatool::response_parser::extract_email(Some(&payload)),
+            "is_account_missing": crate::ipatool::response_parser::is_account_missing_from_keyring(Some(&payload)),
+            "logs": logs.iter().map(super::sync::log_message_json).collect::<Vec<_>>(),
         });
         unsafe { *out_json = alloc_json(&value) };
         FFI_OK
@@ -256,7 +319,11 @@ unsafe fn read_login_arguments(
     })
 }
 
-fn write_login_result(out_json: *mut *mut c_char, result: LoginResult) -> i32 {
+fn write_login_result(
+    out_json: *mut *mut c_char,
+    result: LoginResult,
+    logs: Vec<LogMessage>,
+) -> i32 {
     let message = match &result.message {
         Message::Key { key, args } => json!({
             "kind": "key",
@@ -272,6 +339,7 @@ fn write_login_result(out_json: *mut *mut c_char, result: LoginResult) -> i32 {
         "status": login_status_name(result.status),
         "message": message,
         "raw_payload": result.raw_payload,
+        "logs": logs.iter().map(super::sync::log_message_json).collect::<Vec<_>>(),
     });
     unsafe { *out_json = alloc_json(&value) };
     FFI_OK

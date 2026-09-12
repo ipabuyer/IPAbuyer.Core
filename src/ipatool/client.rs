@@ -13,6 +13,7 @@ use crate::ipatool::command_builder;
 use crate::ipatool::response_parser;
 use crate::ipatool::response_parser::NormalizedText;
 use crate::ipatool::result::{ErrorMessage, IpatoolResult};
+use crate::purchases::sync_service::{LogLevel, LogMessage};
 
 /// 查询/购买类命令默认超时。
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -20,6 +21,10 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 pub const AUTH_LOGIN_TIMEOUT: Duration = Duration::from_secs(60);
 /// 下载不设固定超时：由"终止下载"或宿主退出终止进程。
 pub const DOWNLOAD_TIMEOUT: Option<Duration> = None;
+
+/// 详细日志回调：接收命令行与输出行（均已脱敏）。宿主在 detailed_log
+/// 关闭时传 `None`，Core 不自行读取配置。
+pub type CommandLogSink<'a> = &'a mut dyn FnMut(LogMessage);
 
 /// 客户端错误：外部取消（对齐 C# `OperationCanceledException` 的传播语义）。
 #[derive(Debug, PartialEq, Eq)]
@@ -53,6 +58,7 @@ impl IpatoolClient {
         auth_code: Option<&str>,
         passphrase: Option<&str>,
         cancel: &AtomicBool,
+        on_log: Option<CommandLogSink>,
     ) -> Result<IpatoolResult, ClientError> {
         let mut arguments = vec![
             "auth".to_string(),
@@ -73,17 +79,23 @@ impl IpatoolClient {
             Some(AUTH_LOGIN_TIMEOUT),
             cancel,
             None,
+            on_log,
         )
     }
 
     /// 退出登录（不携带密钥；前后清理 `.ipatool/cookies.lock`）。
-    pub fn auth_logout(&self, cancel: &AtomicBool) -> Result<IpatoolResult, ClientError> {
+    pub fn auth_logout(
+        &self,
+        cancel: &AtomicBool,
+        on_log: Option<CommandLogSink>,
+    ) -> Result<IpatoolResult, ClientError> {
         self.execute(
             vec!["auth".to_string(), "revoke".to_string()],
             None,
             Some(DEFAULT_TIMEOUT),
             cancel,
             None,
+            on_log,
         )
     }
 
@@ -92,6 +104,7 @@ impl IpatoolClient {
         &self,
         passphrase: Option<&str>,
         cancel: &AtomicBool,
+        on_log: Option<CommandLogSink>,
     ) -> Result<IpatoolResult, ClientError> {
         self.execute(
             vec!["auth".to_string(), "info".to_string()],
@@ -99,6 +112,7 @@ impl IpatoolClient {
             Some(DEFAULT_TIMEOUT),
             cancel,
             None,
+            on_log,
         )
     }
 
@@ -108,6 +122,7 @@ impl IpatoolClient {
         bundle_id: &str,
         passphrase: Option<&str>,
         cancel: &AtomicBool,
+        on_log: Option<CommandLogSink>,
     ) -> Result<IpatoolResult, ClientError> {
         self.execute(
             vec![
@@ -119,6 +134,7 @@ impl IpatoolClient {
             Some(DEFAULT_TIMEOUT),
             cancel,
             None,
+            on_log,
         )
     }
 
@@ -130,6 +146,7 @@ impl IpatoolClient {
         passphrase: Option<&str>,
         on_chunk: Option<&(dyn Fn(&str) + Sync)>,
         cancel: &AtomicBool,
+        on_log: Option<CommandLogSink>,
     ) -> Result<IpatoolResult, ClientError> {
         if let Err(error) = std::fs::create_dir_all(output_directory) {
             return Ok(IpatoolResult::from_streams(
@@ -153,6 +170,7 @@ impl IpatoolClient {
             DOWNLOAD_TIMEOUT,
             cancel,
             on_chunk,
+            on_log,
         )
     }
 
@@ -163,6 +181,7 @@ impl IpatoolClient {
         page: i64,
         passphrase: Option<&str>,
         cancel: &AtomicBool,
+        on_log: Option<CommandLogSink>,
     ) -> Result<IpatoolResult, ClientError> {
         self.execute(
             command_builder::build_list_purchases_arguments(max_results, page),
@@ -170,10 +189,12 @@ impl IpatoolClient {
             Some(DEFAULT_TIMEOUT),
             cancel,
             None,
+            on_log,
         )
     }
 
     /// 标准命令路径：追加密钥与全局开关后执行。
+    #[allow(clippy::too_many_arguments)]
     fn execute(
         &self,
         arguments: Vec<String>,
@@ -181,6 +202,7 @@ impl IpatoolClient {
         timeout: Option<Duration>,
         cancel: &AtomicBool,
         on_chunk: Option<&(dyn Fn(&str) + Sync)>,
+        on_log: Option<CommandLogSink>,
     ) -> Result<IpatoolResult, ClientError> {
         let is_logout = command_builder::is_logout(&arguments);
         let passphrase_value = passphrase.map(str::trim).filter(|value| !value.is_empty());
@@ -196,7 +218,7 @@ impl IpatoolClient {
         if is_logout {
             delete_cookie_lock_file();
         }
-        let result = self.run(final_arguments, timeout, cancel, on_chunk);
+        let result = self.run(final_arguments, timeout, cancel, on_chunk, on_log);
         if is_logout {
             delete_cookie_lock_file();
         }
@@ -210,8 +232,18 @@ impl IpatoolClient {
         timeout: Option<Duration>,
         cancel: &AtomicBool,
         on_chunk: Option<&(dyn Fn(&str) + Sync)>,
+        mut on_log: Option<CommandLogSink>,
     ) -> Result<IpatoolResult, ClientError> {
-        // 阶段 3 接入 logging 后，在此按 detailed_log 开关上报命令与输出。
+        // 详细日志：执行前上报命令行（敏感值已遮蔽），对齐 C# EmitCommandIfEnabled。
+        if let Some(sink) = on_log.as_mut() {
+            sink(LogMessage::raw(
+                LogLevel::Ipatool,
+                format!(
+                    "ipatool {}",
+                    command_builder::render_for_display(&final_arguments)
+                ),
+            ));
+        }
         let request = ProcessExecutionRequest {
             program: self.executable_path.clone(),
             working_directory: self.working_directory.clone(),
@@ -222,6 +254,15 @@ impl IpatoolClient {
 
         match execution::execute(&request, cancel, on_chunk) {
             Ok(ExecutionOutcome::Completed(result)) => {
+                // 详细日志：上报输出行（逐行脱敏），对齐 C# EmitOutputIfEnabled。
+                if let Some(sink) = on_log.as_mut() {
+                    let lines = command_builder::sanitized_output_lines(&result.stdout)
+                        .into_iter()
+                        .chain(command_builder::sanitized_output_lines(&result.stderr));
+                    for line in lines {
+                        sink(LogMessage::raw(LogLevel::Ipatool, line));
+                    }
+                }
                 let streams = response_parser::normalize_streams(
                     Some(&result.stdout),
                     Some(&result.stderr),
@@ -291,7 +332,7 @@ mod tests {
         let client = IpatoolClient::new("ipatool.exe");
         let cancel = AtomicBool::new(false);
 
-        let result = client.auth_info(None, &cancel).unwrap();
+        let result = client.auth_info(None, &cancel, None).unwrap();
 
         assert!(!result.timed_out);
         assert_eq!(
@@ -311,9 +352,36 @@ mod tests {
         let client = IpatoolClient::new("ipatool.exe");
         let cancel = AtomicBool::new(false);
 
-        let result = client.auth_logout(&cancel);
+        let result = client.auth_logout(&cancel, None);
 
         // 可执行文件不存在 → Io 错误进入结果（对齐 C# catch ex.Message）。
         assert!(result.is_err() || !result.unwrap().timed_out);
+    }
+
+    #[test]
+    fn detailed_sink_receives_sanitized_command_line() {
+        // 可执行文件不存在仍应先上报命令行日志，密钥取值替换为 "***"。
+        let client = IpatoolClient::new("ipatool.exe");
+        let cancel = AtomicBool::new(false);
+        let mut logs: Vec<LogMessage> = Vec::new();
+        {
+            let mut sink = |log: LogMessage| logs.push(log);
+            let _ = client.auth_info(Some("secret"), &cancel, Some(&mut sink));
+        }
+
+        let rendered: Vec<String> = logs
+            .iter()
+            .filter_map(|log| match &log.message {
+                NormalizedText::Raw(text) => Some(text.clone()),
+                NormalizedText::Keyed { .. } => None,
+            })
+            .collect();
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.starts_with("ipatool auth info")
+                    && line.contains("--keychain-passphrase \"***\"")),
+            "command line log missing or not sanitized: {rendered:?}"
+        );
     }
 }

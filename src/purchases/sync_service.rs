@@ -69,6 +69,7 @@ pub trait ListPurchasesFetcher {
         page: i64,
         passphrase: Option<&str>,
         cancel: &AtomicBool,
+        on_log: Option<&mut dyn FnMut(LogMessage)>,
     ) -> Result<IpatoolResult, ClientError>;
 }
 
@@ -79,8 +80,9 @@ impl ListPurchasesFetcher for IpatoolClient {
         page: i64,
         passphrase: Option<&str>,
         cancel: &AtomicBool,
+        on_log: Option<&mut dyn FnMut(LogMessage)>,
     ) -> Result<IpatoolResult, ClientError> {
-        IpatoolClient::list_purchases(self, max_results, page, passphrase, cancel)
+        IpatoolClient::list_purchases(self, max_results, page, passphrase, cancel, on_log)
     }
 }
 
@@ -110,6 +112,7 @@ impl PurchaseSyncService {
     }
 
     /// 执行全量同步；`on_progress(synced, total)` 与 `on_log` 在调用线程上回调。
+    /// `detailed_log` 开启时，list-purchases 命令行与输出行也经 `on_log` 上报。
     #[allow(clippy::too_many_arguments)]
     pub fn sync(
         &self,
@@ -118,6 +121,7 @@ impl PurchaseSyncService {
         fetcher: &dyn ListPurchasesFetcher,
         store: &mut dyn PurchaseStore,
         cancel: &AtomicBool,
+        detailed_log: bool,
         on_progress: &mut dyn FnMut(i64, i64),
         on_log: &mut dyn FnMut(LogMessage),
     ) -> SyncOutcome {
@@ -144,6 +148,7 @@ impl PurchaseSyncService {
             fetcher,
             store,
             cancel,
+            detailed_log,
             on_progress,
             on_log,
         );
@@ -159,6 +164,7 @@ impl PurchaseSyncService {
         fetcher: &dyn ListPurchasesFetcher,
         store: &mut dyn PurchaseStore,
         cancel: &AtomicBool,
+        detailed_log: bool,
         on_progress: &mut dyn FnMut(i64, i64),
         on_log: &mut dyn FnMut(LogMessage),
     ) -> SyncOutcome {
@@ -183,7 +189,16 @@ impl PurchaseSyncService {
                 return SyncOutcome::Canceled;
             }
 
-            let result = match fetcher.fetch(PAGE_SIZE, page, passphrase, cancel) {
+            let fetch_result = {
+                let mut command_sink = |log: LogMessage| on_log(log);
+                let sink: Option<&mut dyn FnMut(LogMessage)> = if detailed_log {
+                    Some(&mut command_sink)
+                } else {
+                    None
+                };
+                fetcher.fetch(PAGE_SIZE, page, passphrase, cancel, sink)
+            };
+            let result = match fetch_result {
                 Ok(result) => result,
                 Err(ClientError::Canceled) => {
                     store.record_sync_attempt(account, false);
@@ -314,6 +329,7 @@ mod tests {
             page: i64,
             _passphrase: Option<&str>,
             _cancel: &AtomicBool,
+            _on_log: Option<&mut dyn FnMut(LogMessage)>,
         ) -> Result<IpatoolResult, ClientError> {
             let index = self.calls.fetch_add(1, Ordering::Relaxed);
             let _ = page;
@@ -349,6 +365,7 @@ mod tests {
             &fetcher,
             &mut store,
             &cancel,
+            false,
             &mut |synced, total| progress_events.push((synced, total)),
             &mut |message| logs.push(message),
         );
@@ -393,6 +410,7 @@ mod tests {
                 &fetcher,
                 &mut store,
                 &cancel,
+                false,
                 &mut ignored,
                 &mut log_sink
             ),
@@ -417,6 +435,7 @@ mod tests {
             &fetcher,
             &mut store,
             &cancel,
+            false,
             &mut ignored,
             &mut log_sink,
         );
@@ -446,6 +465,7 @@ mod tests {
                 &fetcher,
                 &mut store,
                 &cancel,
+                false,
                 &mut ignored,
                 &mut log_sink
             ),
@@ -473,6 +493,7 @@ mod tests {
                 _page: i64,
                 _passphrase: Option<&str>,
                 _cancel: &AtomicBool,
+                _on_log: Option<&mut dyn FnMut(LogMessage)>,
             ) -> Result<IpatoolResult, ClientError> {
                 self.started.send(()).unwrap();
                 while !self.release.load(Ordering::Relaxed) {
@@ -501,6 +522,7 @@ mod tests {
                 &fetcher,
                 &mut store,
                 &first_cancel,
+                false,
                 &mut ignored,
                 &mut log_sink,
             )
@@ -523,6 +545,7 @@ mod tests {
                 &fetcher,
                 &mut store,
                 &cancel,
+                false,
                 &mut ignored,
                 &mut log_sink
             ),

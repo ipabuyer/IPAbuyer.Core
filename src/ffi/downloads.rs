@@ -214,14 +214,19 @@ pub unsafe extern "C" fn ipabuyer_core_queue_start(handle: *mut QueueHandle) -> 
             let client = IpatoolClient::new(PathBuf::from(exe_path));
             let runner = |item: &crate::downloads::DownloadQueueItem,
                           on_chunk: Option<&(dyn Fn(&str) + Sync)>,
-                          cancel: &AtomicBool|
+                          cancel: &AtomicBool,
+                          on_log: &mut dyn FnMut(LogMessage)|
              -> Result<IpatoolResult, ClientError> {
+                let mut sink = |log: LogMessage| on_log(log);
+                let detailed_sink: Option<&mut dyn FnMut(LogMessage)> =
+                    if detailed_log { Some(&mut sink) } else { None };
                 client.download_app(
                     &item.bundle_id,
                     &output_directory,
                     Some(&passphrase),
                     on_chunk,
                     cancel,
+                    detailed_sink,
                 )
             };
 

@@ -27,6 +27,7 @@ pub type DownloadRunner<'a> = &'a dyn Fn(
     &DownloadQueueItem,
     Option<&(dyn Fn(&str) + Sync)>,
     &AtomicBool,
+    &mut dyn FnMut(LogMessage),
 ) -> Result<IpatoolResult, ClientError>;
 
 /// 入队结果。
@@ -293,7 +294,7 @@ impl DownloadQueueService {
             let context_for_chunk = Arc::clone(&context);
             let on_chunk = move |chunk: &str| context_for_chunk.process(chunk);
 
-            let run_result = runner(&item, Some(&on_chunk), cancel);
+            let run_result = runner(&item, Some(&on_chunk), cancel, on_log);
 
             // 冲刷输出解析器；请求许可阶段已在回调中实时更新条目。
             let flush = context.flush();
@@ -307,14 +308,6 @@ impl DownloadQueueService {
                     on_log,
                     on_change,
                 );
-            }
-            if detailed_log {
-                for line in &flush.log_lines {
-                    on_log(LogMessage::raw(
-                        LogLevel::Ipatool,
-                        format!("[{}] {line}", item.name),
-                    ));
-                }
             }
             if detailed_log {
                 for line in &flush.log_lines {
@@ -637,7 +630,8 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let runner = |item: &DownloadQueueItem,
                       _: Option<&(dyn Fn(&str) + Sync)>,
-                      _: &AtomicBool|
+                      _: &AtomicBool,
+                      _: &mut dyn FnMut(LogMessage)|
          -> Result<IpatoolResult, ClientError> {
             if item.bundle_id == "com.b" {
                 return Ok(IpatoolResult::from_streams(
@@ -698,7 +692,8 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let runner = |_item: &DownloadQueueItem,
                       _: Option<&(dyn Fn(&str) + Sync)>,
-                      _: &AtomicBool|
+                      _: &AtomicBool,
+                      _: &mut dyn FnMut(LogMessage)|
          -> Result<IpatoolResult, ClientError> {
             panic!("mock flow must not invoke runner");
         };
@@ -739,7 +734,8 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let runner = |_item: &DownloadQueueItem,
                       on_chunk: Option<&(dyn Fn(&str) + Sync)>,
-                      _: &AtomicBool|
+                      _: &AtomicBool,
+                      _: &mut dyn FnMut(LogMessage)|
          -> Result<IpatoolResult, ClientError> {
             if let Some(on_chunk) = on_chunk {
                 on_chunk("{\"message\":\"purchase\"}\n");
@@ -793,7 +789,8 @@ mod tests {
         let runner_cancel_for_runner = Arc::clone(&runner_cancel);
         let runner = move |_item: &DownloadQueueItem,
                            _: Option<&(dyn Fn(&str) + Sync)>,
-                           _: &AtomicBool|
+                           _: &AtomicBool,
+                           _: &mut dyn FnMut(LogMessage)|
               -> Result<IpatoolResult, ClientError> {
             runner_cancel_for_runner.store(true, Ordering::Relaxed);
             Err(ClientError::Canceled)
@@ -823,7 +820,8 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let runner = |_item: &DownloadQueueItem,
                       _: Option<&(dyn Fn(&str) + Sync)>,
-                      _: &AtomicBool|
+                      _: &AtomicBool,
+                      _: &mut dyn FnMut(LogMessage)|
          -> Result<IpatoolResult, ClientError> { unreachable!() };
 
         let mut logs: Vec<LogMessage> = Vec::new();
@@ -858,7 +856,8 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let runner = |_item: &DownloadQueueItem,
                       _: Option<&(dyn Fn(&str) + Sync)>,
-                      _: &AtomicBool|
+                      _: &AtomicBool,
+                      _: &mut dyn FnMut(LogMessage)|
          -> Result<IpatoolResult, ClientError> {
             Ok(IpatoolResult::from_streams(
                 NormalizedText::Raw(String::new()),

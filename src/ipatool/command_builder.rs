@@ -93,6 +93,70 @@ pub fn get_safe_command_label(arguments: &[impl AsRef<str>]) -> String {
     }
 }
 
+/// 显示命令行时需要遮蔽取值的敏感开关（大小写不敏感，对齐 C#）。
+const SENSITIVE_SWITCHES: [&str; 3] = ["--password", "--auth-code", "--keychain-passphrase"];
+
+/// 输出行内需要遮蔽取值的敏感 JSON 属性（对齐 C# `SensitiveJsonPropertyRegex`）。
+fn sensitive_json_property_regex() -> &'static fancy_regex::Regex {
+    static REGEX: std::sync::OnceLock<fancy_regex::Regex> = std::sync::OnceLock::new();
+    REGEX.get_or_init(|| {
+        fancy_regex::Regex::new(
+            r#"(?i)("(?:password|authCode|keychainPassphrase|keychain-passphrase|keychain_passphrase|passphrase|PasswordToken)"\s*:\s*)"(?:\\.|[^"])*""#,
+        )
+        .expect("sensitive json property regex must compile")
+    })
+}
+
+/// 渲染完整命令行用于日志显示：带空白或引号的参数加引号，
+/// 敏感开关的取值替换为 `"***"`（对齐 C# `RenderArgumentsForDisplay`）。
+pub fn render_for_display(arguments: &[impl AsRef<str>]) -> String {
+    let mut rendered: Vec<String> = Vec::with_capacity(arguments.len());
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = arguments[index].as_ref();
+        rendered.push(format_argument_for_display(argument));
+        let is_sensitive_switch = SENSITIVE_SWITCHES
+            .iter()
+            .any(|switch| switch.eq_ignore_ascii_case(argument));
+        if is_sensitive_switch && index + 1 < arguments.len() {
+            rendered.push("\"***\"".to_string());
+            index += 1;
+        }
+        index += 1;
+    }
+    rendered.join(" ")
+}
+
+fn format_argument_for_display(argument: &str) -> String {
+    if argument.is_empty() {
+        return "\"\"".to_string();
+    }
+    if !argument.chars().any(char::is_whitespace) && !argument.contains('"') {
+        return argument.to_string();
+    }
+    format!("\"{}\"", argument.replace('"', "\\\""))
+}
+
+/// 遮蔽文本中的敏感 JSON 属性取值（对齐 C# `IpatoolCommandLog.Sanitize`）。
+pub fn sanitize_line(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    sensitive_json_property_regex()
+        .replace_all(text, "${1}\"***\"")
+        .to_string()
+}
+
+/// 拆分输出流为非空行并逐行脱敏（对齐 C# `EmitOutputIfEnabled` 的行处理）。
+pub fn sanitized_output_lines(stream: &str) -> Vec<String> {
+    stream
+        .split(['\r', '\n'])
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(sanitize_line)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +270,45 @@ mod tests {
         for (arguments, expected) in cases {
             assert_eq!(get_safe_command_label(&arguments), expected);
         }
+    }
+
+    #[test]
+    fn render_for_display_masks_sensitive_switch_values() {
+        let arguments = build_standard_arguments(&["auth", "login"], "secret", false);
+        let rendered = render_for_display(&arguments);
+
+        assert!(rendered.contains("--keychain-passphrase \"***\""));
+        assert!(!rendered.contains("secret"));
+    }
+
+    #[test]
+    fn render_for_display_quotes_arguments_with_whitespace() {
+        let rendered = render_for_display(&["download", "--output", "C:\\My Downloads", "x"]);
+
+        assert!(rendered.contains("\"C:\\My Downloads\""));
+        assert!(rendered.starts_with("download --output"));
+    }
+
+    #[test]
+    fn sanitize_line_masks_sensitive_json_properties() {
+        let cases = [
+            (r#"{"password":"hunter2"}"#, r#"{"password":"***"}"#),
+            (
+                r#"{"keychainPassphrase": "s3cret"}"#,
+                r#"{"keychainPassphrase": "***"}"#,
+            ),
+            (r#"{"name":"app"}"#, r#"{"name":"app"}"#),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(sanitize_line(input), expected);
+        }
+    }
+
+    #[test]
+    fn sanitized_output_lines_trims_and_skips_blank_lines() {
+        let lines = sanitized_output_lines("first\r\n\r\n  second  \n{\"password\":\"x\"}");
+
+        assert_eq!(lines, ["first", "second", "{\"password\":\"***\"}"]);
     }
 }

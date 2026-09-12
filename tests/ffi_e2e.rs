@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use ipabuyer_core::ffi::{self, FFI_ERR_INVALID_ARG, FFI_OK};
+use ipabuyer_core::ffi::{self, FFI_ERR_FAILED, FFI_ERR_INVALID_ARG, FFI_OK};
 use ipabuyer_core::ipatool::response_parser::NormalizedText;
 use ipabuyer_core::purchases::sync_service::{LogLevel, LogMessage};
 
@@ -128,6 +128,7 @@ fn mock_login_via_ffi_returns_success() {
             password.as_ptr(),
             auth_code.as_ptr(),
             passphrase.as_ptr(),
+            0,
             &cancel,
             &mut out,
         )
@@ -207,6 +208,7 @@ fn sync_end_to_end_with_fake_ipatool() {
                 script_c.as_ptr(),
                 passphrase.as_ptr(),
                 account.as_ptr(),
+                0,
                 &mut handle,
             )
         },
@@ -310,6 +312,81 @@ fn queue_end_to_end_with_fake_ipatool() {
         FFI_OK
     );
     let _ = std::fs::remove_dir_all(&output_directory);
+    let _ = std::fs::remove_dir_all(script.parent().unwrap());
+}
+
+#[cfg(windows)]
+#[test]
+fn purchase_via_fake_ipatool_returns_outcome_and_logs() {
+    let script = write_fake_ipatool(
+        "purchase",
+        &[r#"{"success":true,"email":" e2e@test.com "}"#],
+    );
+    let script_c = cstring(&script.to_string_lossy());
+    let bundle_id = cstring("com.e2e.purchase");
+    let passphrase = cstring("passphrase");
+    let cancel = AtomicBool::new(false);
+    let mut out = std::ptr::null_mut();
+
+    // detailed_log = 1：命令行与输出应进入 logs 且密钥已脱敏。
+    assert_eq!(
+        unsafe {
+            ffi::purchase::ipabuyer_core_purchase(
+                script_c.as_ptr(),
+                bundle_id.as_ptr(),
+                passphrase.as_ptr(),
+                1,
+                &cancel,
+                &mut out,
+            )
+        },
+        FFI_OK
+    );
+
+    let value = read_json(out);
+    assert_eq!(value["outcome"], "Purchased");
+    assert!(value["raw_payload"].as_str().unwrap().contains("success"));
+
+    let logs = value["logs"].as_array().expect("logs");
+    let rendered: Vec<String> = logs
+        .iter()
+        .filter(|log| log["level"] == "ipatool")
+        .map(|log| {
+            log["message"]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line.starts_with("ipatool purchase") && line.contains("\"***\"")),
+        "command line log missing or not sanitized: {rendered:?}"
+    );
+
+    // 取消路径：cancel 置位后应返回失败码并写 last_error。
+    let cancel_now = AtomicBool::new(true);
+    let mut out_cancel = std::ptr::null_mut();
+    let code = unsafe {
+        ffi::purchase::ipabuyer_core_purchase(
+            script_c.as_ptr(),
+            bundle_id.as_ptr(),
+            passphrase.as_ptr(),
+            0,
+            &cancel_now,
+            &mut out_cancel,
+        )
+    };
+    assert_eq!(code, FFI_ERR_FAILED);
+    let error = ffi::ipabuyer_core_last_error();
+    let text = unsafe { CStr::from_ptr(error) }
+        .to_str()
+        .unwrap()
+        .to_string();
+    unsafe { ffi::ipabuyer_core_free_string(error) };
+    assert_eq!(text, "canceled");
+
     let _ = std::fs::remove_dir_all(script.parent().unwrap());
 }
 

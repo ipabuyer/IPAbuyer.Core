@@ -14,6 +14,7 @@ pub mod auth;
 pub mod catalog;
 pub mod db;
 pub mod downloads;
+pub mod purchase;
 pub mod sync;
 
 use std::cell::RefCell;

@@ -51,8 +51,16 @@ jobs:
         toolchain: 1.98.1
         targets: ${{ matrix.target }}
 
+    # aarch64 交叉编译时 ring 的 C 代码需要 clang（x64 runner 无 ARM64 MSVC 工具链）。
+    - name: Install LLVM for arm64 cross-compile
+      if: matrix.arch == 'arm64'
+      run: choco install llvm -y
+
     - name: Build release DLL
       run: cargo build --release --locked --target ${{ matrix.target }}
+      env:
+        CC_aarch64_pc_windows_msvc: clang-cl
+        CXX_aarch64_pc_windows_msvc: clang-cl
 
     - name: Organize artifacts
       run: |

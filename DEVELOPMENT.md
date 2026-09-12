@@ -101,13 +101,16 @@ cargo build --release --target aarch64-pc-windows-msvc     # ARM64 DLL
 | 分组 | 导出 | 说明 |
 | --- | --- | --- |
 | 基础 | `version` / `free_string` / `last_error` | 版本号（编译期注入）、字符串释放、线程本地错误 |
-| 数据库 | `db_open` / `db_close` / `db_save_purchased_app` / `db_get_purchased_apps` / `db_get_app_status` / `db_remove_purchased_app` / `db_clear_purchased_apps` / `db_get_total_count` / `db_bulk_mark_purchased` / `db_get_last_sync_utc` / `db_record_sync_attempt` | 句柄式 CRUD；JSON 契约见 src/ffi/db.rs 模块文档 |
-| 认证 | `auth_login` / `auth_verify_code` / `auth_logout` / `auth_info` / `is_mock_account` | 登录结果 JSON 含 `status`/`message`（键名或原文）/`raw_payload`；`auth_info` 附带解析出的 `is_success`/`email` |
+| 数据库 | `db_open` / `db_close` / `db_save_purchased_app` / `db_get_purchased_apps` / `db_get_app_status` / `db_remove_purchased_app` / `db_clear_purchased_apps` / `db_get_total_count` / `db_bulk_mark_purchased` / `db_get_last_sync_utc` / `db_record_sync_attempt` | 句柄式 CRUD；JSON 契约见 src/ffi/db.rs 模块文档；句柄非线程安全，宿主负责串行化访问 |
+| 认证 | `auth_login` / `auth_verify_code` / `auth_logout` / `auth_info` / `is_mock_account` | 登录结果 JSON 含 `status`/`message`（键名或原文）/`raw_payload`/`logs`；`auth_info` 附带 `is_success`/`has_explicit_failure`/`email`/`is_account_missing`；`auth_logout` 返回 `success`+`logs` |
 | 搜索 | `catalog_search` | iTunes Search + 已购买状态合成（已购记录由宿主以 JSON 传入） |
-| 同步 | `sync_create` / `sync_status` / `sync_cancel` / `sync_destroy` | 后台线程全量同步；句柄内自建数据库连接；进度与日志轮询 |
-| 队列 | `queue_create` / `queue_add` / `queue_remove` / `queue_start` / `queue_status` / `queue_cancel` / `queue_destroy` | 下载队列状态机；`queue_status` 返回条目快照与累计日志 |
+| 购买 | `purchase` | 执行 purchase 命令并解释结果；JSON 含 `outcome`（`Purchased`/`AlreadyOwned`/`NeedsOwnedConfirmation`/`Failed`）/`raw_payload`/`logs` |
+| 同步 | `sync_create` / `sync_status` / `sync_cancel` / `sync_destroy` | 后台线程全量同步；句柄内自建数据库连接；进度与日志轮询；`sync_create` 带 `detailed_log` |
+| 队列 | `queue_create` / `queue_add` / `queue_remove` / `queue_start` / `queue_status` / `queue_cancel` / `queue_destroy` | 下载队列状态机；`queue_status` 返回条目快照与累计日志；取消为队列级（终止当前下载并结束本轮，剩余条目保留原状态） |
 
 JSON 字段命名统一 snake_case；`message` 类字段以 `{"kind":"key","key":...,"args":[...]}`（待宿主本地化）或 `{"kind":"raw","text":...}`（原文）承载。
+
+`detailed_log` 参数（`auth_login`/`auth_verify_code`/`auth_logout`/`auth_info`/`purchase`/`sync_create`/`queue_create`）非 0 时，结果中的 `logs` 数组携带命令行与输出行（命令行经敏感开关遮蔽、输出行经敏感 JSON 属性脱敏，见 `command_builder::render_for_display` / `sanitize_line`）；为 0 时 `logs` 为空数组。日志条目同 `sync_status` 契约（`level` 含 `ipatool`）。
 
 ## 6. 模块划分与迁移映射
 

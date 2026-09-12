@@ -51,6 +51,7 @@ pub unsafe extern "C" fn ipabuyer_core_sync_create(
     exe_path: *const c_char,
     passphrase: *const c_char,
     account: *const c_char,
+    detailed_log: i32,
     out_handle: *mut *mut SyncHandle,
 ) -> i32 {
     catch(FFI_ERR_PANIC, || -> i32 {
@@ -96,6 +97,7 @@ pub unsafe extern "C" fn ipabuyer_core_sync_create(
                     &client,
                     &mut db,
                     &worker_cancel,
+                    detailed_log != 0,
                     &mut |synced, total| {
                         let mut snapshot = worker_state.lock().expect("sync state lock");
                         snapshot.synced = synced;

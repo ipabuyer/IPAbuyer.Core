@@ -20,6 +20,9 @@
    1. `db`：SQLite（迁移 0→1→2，已拥有并入已购买；SyncState 同步状态；批量标记）
    2. `downloads`：下载队列状态机、输出解析（请求许可阶段、进度去重、ANSI 清洗）、结果解析
    3. `logging`：环形日志缓冲（上限 1000 条、快照导出）
-5. FFI 导出层种子：`ipabuyer_core_version` / `ipabuyer_core_free_string`（catch_unwind 边界模式）
-6. 质量门禁：114 个单元测试、`cargo fmt --check` 与 `cargo clippy -- -D warnings` 全绿
-7. 工程配置：AGENTS.md（基准约束）、DEVELOPMENT.md（开发指南）、.gitattributes（LFS 与换行）、.gitignore；版本号约定为 `0.0.x`，每发版一次 x+1
+5. FFI 导出层：C ABI 封装全部业务模块与轮询式长任务句柄
+   1. 基础：`version` / `free_string` / `last_error`；动作类返回 i32 状态码，复杂契约走 JSON
+   2. 数据库 / 认证 / 搜索 / 购买 / 同步 / 下载队列全部导出；`auth_*`、`purchase` 结果附带详细日志（按 `detailed_log` 开关返回脱敏命令行与输出），`auth_info` 附带解析字段与 `is_account_missing`
+6. 质量门禁：128 个测试（119 单元 + 9 FFI 端到端）、`cargo fmt --check` 与 `cargo clippy -- -D warnings` 全绿
+7. 工程配置：AGENTS.md（基准约束）、DEVELOPMENT.md（开发指南）、.gitattributes（LFS 与换行）、.gitignore、tag.ps1 与 build.yml（打 `v*` 标签触发测试→构建→发布）；版本号约定为 `0.0.x`，每发版一次 x+1
+8. 修复：同步服务 `list-purchases` 调用未携带加密密钥；下载队列详细日志重复上抛；CI arm64 交叉编译补充 LLVM/clang

@@ -7,7 +7,7 @@
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use crate::ipatool::client::{ClientError, IpatoolClient};
+use crate::ipatool::client::{ClientError, CommandLogSink, IpatoolClient};
 use crate::json;
 
 /// 模拟账户用户名（测试用途：购买/下载一律直接成功）。
@@ -86,9 +86,10 @@ pub fn login(
     password: &str,
     passphrase: Option<&str>,
     cancel: &AtomicBool,
+    on_log: Option<CommandLogSink>,
 ) -> LoginResult {
     execute_login(
-        client, account, password, passphrase, "000000", false, cancel,
+        client, account, password, passphrase, "000000", false, cancel, on_log,
     )
 }
 
@@ -100,9 +101,10 @@ pub fn verify_auth_code(
     passphrase: Option<&str>,
     auth_code: &str,
     cancel: &AtomicBool,
+    on_log: Option<CommandLogSink>,
 ) -> LoginResult {
     execute_login(
-        client, account, password, passphrase, auth_code, true, cancel,
+        client, account, password, passphrase, auth_code, true, cancel, on_log,
     )
 }
 
@@ -115,6 +117,7 @@ fn execute_login(
     auth_code: &str,
     is_two_factor: bool,
     cancel: &AtomicBool,
+    on_log: Option<&mut dyn FnMut(crate::purchases::sync_service::LogMessage)>,
 ) -> LoginResult {
     if is_mock_account(Some(account), Some(password)) {
         if !sleep_cancellable(MOCK_LOGIN_DELAY, cancel) {
@@ -131,7 +134,14 @@ fn execute_login(
         };
     }
 
-    let response = client.auth_login(account, password, Some(auth_code), passphrase, cancel);
+    let response = client.auth_login(
+        account,
+        password,
+        Some(auth_code),
+        passphrase,
+        cancel,
+        on_log,
+    );
     match response {
         Err(ClientError::Canceled) => LoginResult {
             status: LoginStatus::UnknownError,
