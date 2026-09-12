@@ -23,6 +23,7 @@ pub const STATUS_PURCHASED: &str = "purchased";
 pub enum DbError {
     Sqlite(rusqlite::Error),
     InvalidStatus,
+    Json(String),
 }
 
 impl From<rusqlite::Error> for DbError {
@@ -31,11 +32,18 @@ impl From<rusqlite::Error> for DbError {
     }
 }
 
+impl From<serde_json::Error> for DbError {
+    fn from(error: serde_json::Error) -> Self {
+        DbError::Json(error.to_string())
+    }
+}
+
 impl std::fmt::Display for DbError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DbError::Sqlite(error) => write!(f, "{error}"),
             DbError::InvalidStatus => write!(f, "invalid purchase record status"),
+            DbError::Json(message) => write!(f, "{message}"),
         }
     }
 }

@@ -96,6 +96,19 @@ cargo build --release --target aarch64-pc-windows-msvc     # ARM64 DLL
 2. Core 内部长任务在独立线程执行，并通过**轮询接口**上报状态（如 `ipabuyer_core_sync_status(handle) -> JSON`，包含阶段、已同步数、总数、最近日志游标）；函数指针回调作为后续优化项，引入时必须文档化线程约束。
 3. 取消：长任务句柄提供 `_cancel` 导出，Core 内部以原子标志 + 子进程终止实现；取消后任务资源仍需 `_destroy` 释放。
 
+### 5.4 导出函数清单
+
+| 分组 | 导出 | 说明 |
+| --- | --- | --- |
+| 基础 | `version` / `free_string` / `last_error` | 版本号（编译期注入）、字符串释放、线程本地错误 |
+| 数据库 | `db_open` / `db_close` / `db_save_purchased_app` / `db_get_purchased_apps` / `db_get_app_status` / `db_remove_purchased_app` / `db_clear_purchased_apps` / `db_get_total_count` / `db_bulk_mark_purchased` / `db_get_last_sync_utc` / `db_record_sync_attempt` | 句柄式 CRUD；JSON 契约见 src/ffi/db.rs 模块文档 |
+| 认证 | `auth_login` / `auth_verify_code` / `auth_logout` / `auth_info` / `is_mock_account` | 登录结果 JSON 含 `status`/`message`（键名或原文）/`raw_payload`；`auth_info` 附带解析出的 `is_success`/`email` |
+| 搜索 | `catalog_search` | iTunes Search + 已购买状态合成（已购记录由宿主以 JSON 传入） |
+| 同步 | `sync_create` / `sync_status` / `sync_cancel` / `sync_destroy` | 后台线程全量同步；句柄内自建数据库连接；进度与日志轮询 |
+| 队列 | `queue_create` / `queue_add` / `queue_remove` / `queue_start` / `queue_status` / `queue_cancel` / `queue_destroy` | 下载队列状态机；`queue_status` 返回条目快照与累计日志 |
+
+JSON 字段命名统一 snake_case；`message` 类字段以 `{"kind":"key","key":...,"args":[...]}`（待宿主本地化）或 `{"kind":"raw","text":...}`（原文）承载。
+
 ## 6. 模块划分与迁移映射
 
 | C# 原模块（主仓库） | Rust 模块 | 迁移阶段 |

@@ -67,6 +67,7 @@ pub trait ListPurchasesFetcher {
         &self,
         max_results: i64,
         page: i64,
+        passphrase: Option<&str>,
         cancel: &AtomicBool,
     ) -> Result<IpatoolResult, ClientError>;
 }
@@ -76,9 +77,10 @@ impl ListPurchasesFetcher for IpatoolClient {
         &self,
         max_results: i64,
         page: i64,
+        passphrase: Option<&str>,
         cancel: &AtomicBool,
     ) -> Result<IpatoolResult, ClientError> {
-        IpatoolClient::list_purchases(self, max_results, page, None, cancel)
+        IpatoolClient::list_purchases(self, max_results, page, passphrase, cancel)
     }
 }
 
@@ -112,6 +114,7 @@ impl PurchaseSyncService {
     pub fn sync(
         &self,
         account: &str,
+        passphrase: Option<&str>,
         fetcher: &dyn ListPurchasesFetcher,
         store: &mut dyn PurchaseStore,
         cancel: &AtomicBool,
@@ -135,14 +138,24 @@ impl PurchaseSyncService {
             return SyncOutcome::AlreadyRunning;
         }
 
-        let outcome = self.run(account, fetcher, store, cancel, on_progress, on_log);
+        let outcome = self.run(
+            account,
+            passphrase,
+            fetcher,
+            store,
+            cancel,
+            on_progress,
+            on_log,
+        );
         self.is_running.store(false, Ordering::Relaxed);
         outcome
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run(
         &self,
         account: &str,
+        passphrase: Option<&str>,
         fetcher: &dyn ListPurchasesFetcher,
         store: &mut dyn PurchaseStore,
         cancel: &AtomicBool,
@@ -170,7 +183,7 @@ impl PurchaseSyncService {
                 return SyncOutcome::Canceled;
             }
 
-            let result = match fetcher.fetch(PAGE_SIZE, page, cancel) {
+            let result = match fetcher.fetch(PAGE_SIZE, page, passphrase, cancel) {
                 Ok(result) => result,
                 Err(ClientError::Canceled) => {
                     store.record_sync_attempt(account, false);
@@ -299,6 +312,7 @@ mod tests {
             &self,
             _max_results: i64,
             page: i64,
+            _passphrase: Option<&str>,
             _cancel: &AtomicBool,
         ) -> Result<IpatoolResult, ClientError> {
             let index = self.calls.fetch_add(1, Ordering::Relaxed);
@@ -331,6 +345,7 @@ mod tests {
 
         let outcome = service.sync(
             "user@example.com",
+            None,
             &fetcher,
             &mut store,
             &cancel,
@@ -374,6 +389,7 @@ mod tests {
         assert_eq!(
             service.sync(
                 "  ",
+                None,
                 &fetcher,
                 &mut store,
                 &cancel,
@@ -397,6 +413,7 @@ mod tests {
 
         let outcome = service.sync(
             "user",
+            None,
             &fetcher,
             &mut store,
             &cancel,
@@ -425,6 +442,7 @@ mod tests {
         assert_eq!(
             service.sync(
                 "user",
+                None,
                 &fetcher,
                 &mut store,
                 &cancel,
@@ -453,6 +471,7 @@ mod tests {
                 &self,
                 _max_results: i64,
                 _page: i64,
+                _passphrase: Option<&str>,
                 _cancel: &AtomicBool,
             ) -> Result<IpatoolResult, ClientError> {
                 self.started.send(()).unwrap();
@@ -478,6 +497,7 @@ mod tests {
             };
             first_service.sync(
                 "user",
+                None,
                 &fetcher,
                 &mut store,
                 &first_cancel,
@@ -499,6 +519,7 @@ mod tests {
         assert_eq!(
             service.sync(
                 "user",
+                None,
                 &fetcher,
                 &mut store,
                 &cancel,

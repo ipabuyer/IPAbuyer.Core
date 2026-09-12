@@ -12,7 +12,7 @@ use crate::purchases::status_policy;
 
 /// 搜索结果条目（字段与主应用 `SearchResult` 对应；`price`/`purchased` 为
 /// Core 归一后的规范值，宿主负责本地化显示）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct SearchResult {
     pub bundle_id: String,
     pub id: Option<String>,
